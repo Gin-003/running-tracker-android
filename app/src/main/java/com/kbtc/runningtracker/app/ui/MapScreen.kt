@@ -1,105 +1,151 @@
 package com.kbtc.runningtracker.app.ui
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
 import android.location.Location
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
-import com.google.android.gms.maps.model.CameraPosition
-import com.google.android.gms.maps.model.LatLng
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import com.google.android.gms.maps.model.*
 import com.google.maps.android.compose.*
 import com.kbtc.runningtracker.app.data.LocationPoint
 import com.kbtc.runningtracker.app.data.Workout
+import com.kbtc.runningtracker.app.location.LocationService
+import kotlinx.coroutines.launch
 
 @Composable
 fun MapScreen(
-    workout: Workout?,
-    currentLocation: Location?,
-    routePoints: List<LocationPoint>,
-    modifier: Modifier = Modifier
+    workout: Workout? = null,
+    currentLocation: Location? = null,
+    onLocationUpdate: (Location) -> Unit = {}
 ) {
-    var cameraPositionState = rememberCameraPositionState()
+    val context = LocalContext.current
+    val locationService = remember { LocationService(context) }
+    val scope = rememberCoroutineScope()
+    var locationPermissionGranted by remember { mutableStateOf(false) }
     
-    // Default to a default location if no workout or current location
-    val defaultLocation = LatLng(37.5665, 126.9780) // Seoul, South Korea
-    
-    // Determine the center of the map
-    val centerLocation = when {
-        workout != null && workout.route.isNotEmpty() -> {
-            // Use the first point of the workout route
-            LatLng(workout.route.first().latitude, workout.route.first().longitude)
-        }
-        currentLocation != null -> {
-            // Use current location
-            LatLng(currentLocation.latitude, currentLocation.longitude)
-        }
-        else -> defaultLocation
+    // Check if we have location permission
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        locationPermissionGranted = permissions.entries.all { it.value }
     }
     
-    // Update camera position when center location changes
-    LaunchedEffect(centerLocation) {
-        cameraPositionState.position = CameraPosition.fromLatLngZoom(centerLocation, 15f)
-    }
-    
-    // Create a list of LatLng points for the route
-    val routeLatLngs = when {
-        workout != null && workout.route.isNotEmpty() -> {
-            workout.route.map { LatLng(it.latitude, it.longitude) }
-        }
-        routePoints.isNotEmpty() -> {
-            routePoints.map { LatLng(it.latitude, it.longitude) }
-        }
-        else -> emptyList()
-    }
-    
-    // Create a list of LatLng points for the markers
-    val markerLatLngs = when {
-        workout != null && workout.route.isNotEmpty() -> {
-            listOf(
-                workout.route.first().let { LatLng(it.latitude, it.longitude) }, // Start
-                workout.route.last().let { LatLng(it.latitude, it.longitude) }   // End
+    // Check permissions on composition
+    LaunchedEffect(Unit) {
+        val hasFineLocation = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        
+        val hasCoarseLocation = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        
+        locationPermissionGranted = hasFineLocation || hasCoarseLocation
+        
+        if (!locationPermissionGranted) {
+            permissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
             )
         }
-        routePoints.isNotEmpty() -> {
-            listOf(
-                routePoints.first().let { LatLng(it.latitude, it.longitude) }, // Start
-                routePoints.last().let { LatLng(it.latitude, it.longitude) }   // End
-            )
-        }
-        else -> emptyList()
     }
     
-    Box(modifier = modifier) {
+    // Handle location updates
+    LaunchedEffect(locationPermissionGranted) {
+        if (locationPermissionGranted) {
+            scope.launch {
+                try {
+                    locationService.getLocationUpdates().collect { location ->
+                        onLocationUpdate(location)
+                    }
+                } catch (e: SecurityException) {
+                    // Handle permission error
+                    e.printStackTrace()
+                }
+            }
+        }
+    }
+    
+    // Default to Yangon, Myanmar if no location is available
+    val defaultLocation = LatLng(16.8409, 96.1735)
+    val cameraPositionState = rememberCameraPositionState()
+    
+    // Update camera position when location changes
+    LaunchedEffect(workout?.route?.firstOrNull(), currentLocation) {
+        val targetLocation = workout?.route?.firstOrNull()?.let { 
+            LatLng(it.latitude, it.longitude)
+        } ?: currentLocation?.let {
+            LatLng(it.latitude, it.longitude)
+        } ?: defaultLocation
+        
+        cameraPositionState.position = CameraPosition.fromLatLngZoom(targetLocation, 15f)
+    }
+    
+    Box(modifier = Modifier.fillMaxSize()) {
         GoogleMap(
             modifier = Modifier.fillMaxSize(),
-            cameraPositionState = cameraPositionState
+            cameraPositionState = cameraPositionState,
+            properties = MapProperties(
+                isMyLocationEnabled = locationPermissionGranted,
+                mapType = MapType.NORMAL
+            ),
+            uiSettings = MapUiSettings(
+                zoomControlsEnabled = true,
+                myLocationButtonEnabled = true
+            )
         ) {
-            // Draw the route polyline
-            if (routeLatLngs.isNotEmpty()) {
-                Polyline(
-                    points = routeLatLngs,
-                    color = MaterialTheme.colorScheme.primary,
-                    width = 5f
+            // Show current location marker if available
+            currentLocation?.let { location ->
+                Marker(
+                    state = MarkerState(
+                        position = LatLng(location.latitude, location.longitude)
+                    ),
+                    title = "Current Location"
                 )
             }
             
-            // Add markers for start and end points
-            markerLatLngs.forEachIndexed { index, latLng ->
-                Marker(
-                    state = MarkerState(position = latLng),
-                    title = if (index == 0) "Start" else "End",
-                    snippet = if (index == 0) "Workout started here" else "Workout ended here"
-                )
-            }
-            
-            // Add a marker for current location if available and not part of a workout
-            if (currentLocation != null && workout == null) {
-                Marker(
-                    state = MarkerState(position = LatLng(currentLocation.latitude, currentLocation.longitude)),
-                    title = "Current Location",
-                    snippet = "You are here"
-                )
+            // Show workout route if available
+            workout?.route?.let { points ->
+                if (points.isNotEmpty()) {
+                    // Draw the route
+                    Polyline(
+                        points = points.map { LatLng(it.latitude, it.longitude) },
+                        color = androidx.compose.ui.graphics.Color.Blue,
+                        width = 5f
+                    )
+                    
+                    // Add start and end markers
+                    Marker(
+                        state = MarkerState(
+                            position = LatLng(points.first().latitude, points.first().longitude)
+                        ),
+                        title = "Start"
+                    )
+                    
+                    if (points.size > 1) {
+                        Marker(
+                            state = MarkerState(
+                                position = LatLng(points.last().latitude, points.last().longitude)
+                            ),
+                            title = "End"
+                        )
+                    }
+                }
             }
         }
         

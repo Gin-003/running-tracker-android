@@ -13,7 +13,7 @@ sealed class AuthUiState {
     data object Initial : AuthUiState()
     data object Loading : AuthUiState()
     data class Error(val message: String) : AuthUiState()
-    data class Success(val userId: String, val username: String) : AuthUiState()
+    data class Success(val userId: String, val username: String, val token: String) : AuthUiState()
 }
 
 class AuthViewModel(application: Application) : AndroidViewModel(application) {
@@ -31,7 +31,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             authRepository.userId.collect { userId ->
                 if (userId != null) {
                     authRepository.username.collect { username ->
-                        _uiState.value = AuthUiState.Success(userId, username ?: "")
+                        authRepository.token.collect { token ->
+                            if (token != null) {
+                                _uiState.value = AuthUiState.Success(userId, username ?: "", token)
+                            }
+                        }
                     }
                 }
             }
@@ -59,15 +63,18 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _uiState.value = AuthUiState.Loading
             try {
-                authRepository.register(username, email, password)
-                    .onSuccess {
-                        checkAuthState()
-                    }
-                    .onFailure { exception ->
-                        _uiState.value = AuthUiState.Error(exception.message ?: "Registration failed")
-                    }
+                val response = authRepository.register(username, email, password)
+                if (response.user_id > 0) {
+                    _uiState.value = AuthUiState.Success(
+                        userId = response.user_id.toString(),
+                        username = username,
+                        token = ""
+                    )
+                } else {
+                    _uiState.value = AuthUiState.Error(response.message)
+                }
             } catch (e: Exception) {
-                _uiState.value = AuthUiState.Error(e.message ?: "Registration failed")
+                _uiState.value = AuthUiState.Error("Registration failed: ${e.message}")
             }
         }
     }

@@ -49,21 +49,30 @@ class WorkoutViewModel(application: Application) : AndroidViewModel(application)
     
     // User ID from authentication
     private var userId: Int = 0
+    private var authToken: String = ""
 
     fun setUserId(id: Int) {
         userId = id
         loadWorkouts()
     }
 
+    fun setAuthToken(token: String) {
+        authToken = token
+    }
+
     init {
         loadWorkouts()
     }
 
-    private fun loadWorkouts() {
+    fun loadWorkouts() {
         viewModelScope.launch {
             try {
-                // For now, just show empty list since we don't have a get workouts endpoint
-                _uiState.value = WorkoutUiState.Success(emptyList())
+                if (authToken.isNotEmpty()) {
+                    val workouts = workoutRepository.getWorkouts(authToken)
+                    _uiState.value = WorkoutUiState.Success(workouts)
+                } else {
+                    _uiState.value = WorkoutUiState.Success(emptyList())
+                }
             } catch (e: Exception) {
                 _uiState.value = WorkoutUiState.Error("Failed to load workouts: ${e.message}")
             }
@@ -118,7 +127,7 @@ class WorkoutViewModel(application: Application) : AndroidViewModel(application)
                 // Auto-compute metrics if not provided
                 val computedDistance = distance ?: calculateDistance(_routePoints.value)
                 val computedCalories = calories ?: calculateCalories(computedDistance, workout.type)
-                val computedHeartRate = heartRate ?: calculateAverageHeartRate(_routePoints.value)
+                val computedHeartRate = heartRate ?: calculateAverageHeartRate(_routePoints.value, workout.type)
                 
                 val updatedWorkout = workout.copy(
                     endTime = LocalDateTime.now(),
@@ -130,15 +139,25 @@ class WorkoutViewModel(application: Application) : AndroidViewModel(application)
                 )
                 
                 // Save workout to server
-                saveWorkoutToServer(updatedWorkout)
+                val response = workoutRepository.saveWorkoutToServer(updatedWorkout, userId, authToken)
+                if (response.message.contains("Failed", ignoreCase = true)) {
+                    throw Exception(response.message)
+                }
                 
-                // Update active workout state
+                // Clear route points and active workout state
+                _routePoints.value = emptyList()
                 activeWorkout = null
                 _activeWorkoutState.value = null
                 
                 // Update UI state with the completed workout
-                val currentWorkouts = (_uiState.value as? WorkoutUiState.Success)?.workouts ?: emptyList()
-                _uiState.value = WorkoutUiState.Success(currentWorkouts + updatedWorkout)
+                when (val currentState = _uiState.value) {
+                    is WorkoutUiState.Success -> {
+                        _uiState.value = WorkoutUiState.Success(currentState.workouts + updatedWorkout)
+                    }
+                    else -> {
+                        _uiState.value = WorkoutUiState.Success(listOf(updatedWorkout))
+                    }
+                }
                 
             } catch (e: Exception) {
                 _uiState.value = WorkoutUiState.Error("Failed to end workout: ${e.message}")
@@ -146,15 +165,8 @@ class WorkoutViewModel(application: Application) : AndroidViewModel(application)
         }
     }
     
-    private suspend fun saveWorkoutToServer(workout: Workout) {
-        try {
-            val response = workoutRepository.saveWorkoutToServer(workout, userId)
-            if (!response.message.contains("created", ignoreCase = true)) {
-                _uiState.value = WorkoutUiState.Error("Failed to save workout to server: ${response.message}")
-            }
-        } catch (e: Exception) {
-            _uiState.value = WorkoutUiState.Error("Failed to save workout to server: ${e.message}")
-        }
+    private suspend fun saveWorkoutToServer(workout: Workout, userId: Int, token: String): ApiResponse {
+        return workoutRepository.saveWorkoutToServer(workout, userId, token)
     }
     
     // Calculate total distance in meters based on route points
@@ -209,7 +221,7 @@ class WorkoutViewModel(application: Application) : AndroidViewModel(application)
     }
     
     // Calculate average heart rate based on route points
-    private fun calculateAverageHeartRate(routePoints: List<LocationPoint>): Int {
+    private fun calculateAverageHeartRate(routePoints: List<LocationPoint>, workoutType: WorkoutType): Int {
         // If we have speed data, estimate heart rate based on intensity
         if (routePoints.isNotEmpty()) {
             val speeds = routePoints.mapNotNull { it.speed }
@@ -225,7 +237,7 @@ class WorkoutViewModel(application: Application) : AndroidViewModel(application)
         }
         
         // Default heart rate based on workout type
-        return when (activeWorkout?.type) {
+        return when (workoutType) {
             WorkoutType.RUNNING -> 150
             WorkoutType.WALKING -> 120
             WorkoutType.CYCLING -> 130

@@ -9,6 +9,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.kbtc.runningtracker.app.api.AuthApiService
 import com.kbtc.runningtracker.app.api.LoginRequest
 import com.kbtc.runningtracker.app.api.RegisterRequest
+import com.kbtc.runningtracker.app.api.RegisterResponse
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -54,21 +55,24 @@ class AuthRepository(
         }
     }
 
-    suspend fun register(username: String, email: String, password: String): Result<Unit> {
+    suspend fun register(username: String, email: String, password: String): RegisterResponse {
         return try {
-            val response = authApiService.register(RegisterRequest(username, email, password))
-            if (response.token != null) {
-                saveAuthData(
-                    response.user_id ?: "",
-                    response.username ?: "",
-                    response.token
-                )
-                Result.success(Unit)
+            val request = RegisterRequest(username, email, password)
+            val response = authApiService.register(request)
+            if (response.user_id > 0) {
+                // Registration successful, but no token is provided
+                response
             } else {
-                Result.failure(Exception(response.message))
+                RegisterResponse(
+                    message = response.message,
+                    user_id = 0
+                )
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            RegisterResponse(
+                message = "Failed to register: ${e.message}",
+                user_id = 0
+            )
         }
     }
 

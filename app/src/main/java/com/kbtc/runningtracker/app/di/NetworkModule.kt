@@ -10,7 +10,7 @@ import java.util.concurrent.TimeUnit
 
 object NetworkModule {
     // Update this to your actual server URL
-    private const val BASE_URL = "http://localhost/"  // Using localhost for local development
+    private const val BASE_URL = "https://6b14-107-151-214-198.ngrok-free.app/"  //currently usng ngrok to live, Using localhost for local development
     
     private val loggingInterceptor = HttpLoggingInterceptor().apply {
         level = HttpLoggingInterceptor.Level.BODY

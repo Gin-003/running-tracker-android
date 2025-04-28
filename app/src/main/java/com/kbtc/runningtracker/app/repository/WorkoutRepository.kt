@@ -3,17 +3,42 @@ package com.kbtc.runningtracker.app.repository
 import com.kbtc.runningtracker.app.api.ApiResponse
 import com.kbtc.runningtracker.app.api.WorkoutApiService
 import com.kbtc.runningtracker.app.api.WorkoutData
+import com.kbtc.runningtracker.app.api.WorkoutRecord
 import com.kbtc.runningtracker.app.data.LocationPoint
 import com.kbtc.runningtracker.app.data.Workout
 import com.kbtc.runningtracker.app.data.WorkoutType
 import java.time.Duration
 import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 
 class WorkoutRepository(private val apiService: WorkoutApiService) {
     
-    suspend fun saveWorkoutToServer(workout: Workout, userId: Int): ApiResponse {
-        try {
+    suspend fun getWorkouts(token: String): List<Workout> {
+        return try {
+            val response = apiService.getWorkouts("Bearer $token")
+            if (response.message == "No workouts found.") {
+                emptyList()
+            } else {
+                response.records?.map { record ->
+                    Workout(
+                        id = record.id.toLong(),
+                        type = WorkoutType.RUNNING, // Default to RUNNING since the API doesn't provide type
+                        startTime = LocalDateTime.parse(record.created_at, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")),
+                        distance = record.distance.toDouble() * 1000, // Convert km to meters
+                        calories = record.calories_burned.toInt(),
+                        notes = "Duration: ${record.duration}s, Avg Speed: ${record.average_speed} km/h"
+                    )
+                } ?: emptyList()
+            }
+        } catch (e: Exception) {
+            // Return empty list for any error, including 404
+            emptyList()
+        }
+    }
+    
+    suspend fun saveWorkoutToServer(workout: Workout, userId: Int, token: String): ApiResponse {
+        return try {
             // Calculate duration in seconds
             val duration = if (workout.endTime != null) {
                 Duration.between(workout.startTime, workout.endTime).seconds.toInt()
@@ -48,9 +73,9 @@ class WorkoutRepository(private val apiService: WorkoutApiService) {
                 end_location = endLocation
             )
             
-            return apiService.saveWorkoutToServer(workoutData)
+            apiService.saveWorkoutToServer("Bearer $token", workoutData)
         } catch (e: Exception) {
-            return ApiResponse(message = "Failed to save workout: ${e.message}")
+            ApiResponse(message = "Failed to save workout: ${e.message}")
         }
     }
     

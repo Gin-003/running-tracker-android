@@ -60,9 +60,8 @@ class LocationService(private val context: Context) {
         fusedLocationClient.removeLocationUpdates(locationCallback)
     }
     
-    fun getLocationUpdates(): Flow<Location> = callbackFlow @androidx.annotation.RequiresPermission(
-        allOf = [android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION]
-    ) {
+    @SuppressLint("MissingPermission")
+    fun getLocationUpdates(): Flow<Location> = callbackFlow {
         val callback = object : LocationCallback() {
             override fun onLocationResult(locationResult: LocationResult) {
                 locationResult.lastLocation?.let { location ->
@@ -87,13 +86,7 @@ class LocationService(private val context: Context) {
                     Looper.getMainLooper()
                 )
             } else {
-                // TODO: Consider calling
-                //    ActivityCompat#requestPermissions
-                // here to request the missing permissions, and then overriding
-                //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
-                //                                          int[] grantResults)
-                // to handle the case where the user grants the permission. See the documentation
-                // for ActivityCompat#requestPermissions for more details.
+                throw SecurityException("Location permission not granted")
             }
         } catch (e: Exception) {
             e.printStackTrace()

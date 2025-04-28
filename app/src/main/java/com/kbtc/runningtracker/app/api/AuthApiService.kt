@@ -8,7 +8,7 @@ interface AuthApiService {
     suspend fun login(@Body request: LoginRequest): AuthResponse
 
     @POST("running_tracker_web/api/register.php")
-    suspend fun register(@Body request: RegisterRequest): AuthResponse
+    suspend fun register(@Body registerRequest: RegisterRequest): RegisterResponse
 }
 
 data class LoginRequest(
@@ -27,4 +27,9 @@ data class AuthResponse(
     val user_id: String? = null,
     val username: String? = null,
     val token: String? = null
+)
+
+data class RegisterResponse(
+    val message: String,
+    val user_id: Int
 ) 
